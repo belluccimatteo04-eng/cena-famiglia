@@ -40,27 +40,45 @@ const json = (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 
 export default async (req) => {
-  const store = getStore({ name: "cena-del-mercoledi", consistency: "strong" });
+  try {
+    const store = getStore({ name: "cena-del-mercoledi", consistency: "strong" });
 
-  if (req.method === "GET") {
-    const s = (await store.get(KEY, { type: "json" })) || empty();
-    return json(s);
+    if (req.method === "GET") {
+      const s = (await store.get(KEY, { type: "json" })) || empty();
+      return json(s);
+    }
+    if (req.method !== "POST") return json({ errore: "metodo non ammesso" }, 405);
+
+    let op;
+    try { op = await req.json(); } catch { return json({ errore: "richiesta non valida" }, 400); }
+
+    // Scrittura sicura: se due persone salvano nello stesso istante, si rilegge e si riprova.
+    for (let i = 0; i < 8; i++) {
+      const cur = await store.getWithMetadata(KEY, { type: "json" });
+      const s = cur && cur.data ? cur.data : empty();
+      try { apply(s, op); } catch (e) { return json({ errore: e.message }, 400); }
+      let res;
+      try {
+        if (cur && cur.etag) res = await store.setJSON(KEY, s, { onlyIfMatch: cur.etag });
+        else if (!cur) res = await store.setJSON(KEY, s, { onlyIfNew: true });
+        else res = await store.setJSON(KEY, s);
+      } catch (e) {
+        console.error("scrittura condizionata non riuscita", e);
+        res = { modified: false };
+      }
+      if (res && res.modified !== false) return json(s);
+      await new Promise((r) => setTimeout(r, 80 + Math.random() * 320));
+    }
+
+    // Ultima possibilità: rilegge e salva senza condizioni, così il dato non va perso.
+    const last = (await store.get(KEY, { type: "json" })) || empty();
+    apply(last, op);
+    await store.setJSON(KEY, last);
+    return json(last);
+  } catch (e) {
+    console.error(e);
+    return json({ errore: "database non raggiungibile (" + (e && e.message ? e.message : "errore sconosciuto") + ")" }, 500);
   }
-  if (req.method !== "POST") return json({ errore: "metodo non ammesso" }, 405);
-
-  let op;
-  try { op = await req.json(); } catch { return json({ errore: "richiesta non valida" }, 400); }
-
-  // Scrittura sicura: se due persone votano nello stesso istante, si riprova senza perdere voti.
-  for (let i = 0; i < 6; i++) {
-    const cur = await store.getWithMetadata(KEY, { type: "json" });
-    const s = cur && cur.data ? cur.data : empty();
-    try { apply(s, op); } catch (e) { return json({ errore: e.message }, 400); }
-    const res = await store.setJSON(KEY, s, cur ? { onlyIfMatch: cur.etag } : { onlyIfNew: true });
-    if (res && res.modified !== false) return json(s);
-    await new Promise((r) => setTimeout(r, 60 + Math.random() * 240));
-  }
-  return json({ errore: "troppe richieste insieme, riprova" }, 409);
 };
 
 export const config = { path: "/api" };

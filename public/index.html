@@ -380,9 +380,12 @@ const Store = {
     document.addEventListener("visibilitychange", () => { if(!document.hidden) tick(); });
   },
   async send(op){
-    const r = await fetch(API, { method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify(op) });
-    if(!r.ok) throw new Error("api " + r.status);
-    this.setState(await r.json()); this.emit();
+    let r;
+    try{ r = await fetch(API, { method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify(op) }); }
+    catch(e){ throw new Error("niente connessione"); }
+    let body = null; try{ body = await r.json(); }catch(e){}
+    if(!r.ok || !body || body.errore) throw new Error((body && body.errore) || ("errore del server " + r.status));
+    this.setState(body); this.emit();
   },
   initDemo(){
     this.live = false;
@@ -526,7 +529,7 @@ function submitVote(id){
       ui.stars = 0; ui.voteC = ""; ui.editing = false; ui.err.vote = "";
       render(); confetti(); toast(was ? "Voto aggiornato" : "Voto inviato, grazie!");
     }catch(err){
-      console.error(err); ui.err.vote = "Non sono riuscito a inviare il voto. Controlla la connessione e riprova."; render();
+      console.error(err); ui.err.vote = "Voto non inviato: " + err.message + ". Riprova."; render();
     }
   };
 }
@@ -599,7 +602,7 @@ async function saveChef(e){
   try{
     await Store.saveCena(d.forId, { chefId:d.chefId, chefNome:m ? m.nome : "", piatto:d.piatto.trim(), note:d.note.trim() });
     ui.err.chef = ""; ui.chef = null; toast("Menù salvato"); go("stasera");
-  }catch(err){ console.error(err); ui.err.chef = "Non sono riuscito a salvare. Riprova."; render(); }
+  }catch(err){ console.error(err); ui.err.chef = "Menù non salvato: " + err.message + ". Riprova."; render(); }
 }
 
 /* ---------- vista: classifica ---------- */
@@ -703,7 +706,7 @@ async function addMember(e){
   if(membri.some(m => m.nome.toLowerCase() === n.toLowerCase())){ ui.err.fam = "C'è già qualcuno con questo nome."; render(); return; }
   membri.push({ id:"m" + Date.now().toString(36) + Math.random().toString(36).slice(2,5), nome:n, emoji:ui.nm.emoji });
   try{ await Store.saveFamiglia(membri, Store.data.ora || "20:30"); ui.nm.nome = ""; ui.err.fam = ""; toast(n + " è a tavola"); render(); }
-  catch(err){ console.error(err); ui.err.fam = "Non sono riuscito a salvare. Riprova."; render(); }
+  catch(err){ console.error(err); ui.err.fam = "Non salvato: " + err.message + ". Riprova."; render(); }
 }
 async function removeMember(id){
   if(ui.confirmDel !== id){ ui.confirmDel = id; render(); setTimeout(() => { if(ui.confirmDel === id){ ui.confirmDel = null; render(); } }, 3500); return; }
